@@ -31,14 +31,36 @@ CREATE INDEX ways_split_long_source_idx ON ways_split_long USING btree (source);
 CREATE INDEX ways_split_long_target_idx ON ways_split_long USING btree (target);
 CREATE INDEX ways_split_long_index ON ways_split_long USING gist (geom);
 CREATE INDEX ways_split_long_vertices_pgr_index ON ways_split_long_vertices_pgr USING gist (geom);
+with  array_class_ids as 
+(
+	SELECT unnest(variable_array::integer[]) as class_id
+	FROM variable_container v
+	WHERE v.identifier = 'excluded_class_id_walking'
+);
 '''
-
+max_length = 300
 cursor.execute(sql_tables)
-cursor.execute('select id ways_id, 1/ceil(length_m/50) as fraction from ways where st_intersects(geom, st_buffer(st_setsrid(st_point(10.684361,47.575645),4326)::geography,1000)) and length_m > 50')
+
+sql_select_ways = ''' with  array_class_ids as
+(
+	SELECT unnest(variable_array::integer[]) as class_id
+	FROM variable_container v
+	WHERE v.identifier = 'excluded_class_id_walking'
+),
+array_excluded_foot as (
+	SELECT unnest(variable_array) as foot
+	FROM variable_container v
+	WHERE v.identifier = 'categories_no_foot'
+)
+SELECT id, 1/ceil(length_m/%i) as fraction, w.class_id  
+FROM ways w, array_class_ids a 
+WHERE length_m > %i
+AND w.class_id not in (select * from array_class_ids)
+AND (foot not in (select * from array_excluded_foot) OR foot IS NULL);
+'''
 ways_to_split = cursor.fetchall()
 
-
-
+ 
 for i in ways_to_split:
     fraction = i[1]
     end = 0
@@ -53,6 +75,7 @@ for i in ways_to_split:
                           geom from ways where id=%i''' % (start,end,i[0]))
 
         con.commit()
+
 
 sql_fill_tables = '''
 UPDATE ways_split_long set class_id = ways.class_id from ways
