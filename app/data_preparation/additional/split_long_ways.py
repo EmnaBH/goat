@@ -31,17 +31,13 @@ CREATE INDEX ways_split_long_source_idx ON ways_split_long USING btree (source);
 CREATE INDEX ways_split_long_target_idx ON ways_split_long USING btree (target);
 CREATE INDEX ways_split_long_index ON ways_split_long USING gist (geom);
 CREATE INDEX ways_split_long_vertices_pgr_index ON ways_split_long_vertices_pgr USING gist (geom);
-with  array_class_ids as 
-(
-	SELECT unnest(variable_array::integer[]) as class_id
-	FROM variable_container v
-	WHERE v.identifier = 'excluded_class_id_walking'
-);
 '''
-max_length = 300
+
 cursor.execute(sql_tables)
 
-sql_select_ways = ''' with  array_class_ids as
+max_length = 300
+
+cursor.execute ( ''' with  array_class_ids as
 (
 	SELECT unnest(variable_array::integer[]) as class_id
 	FROM variable_container v
@@ -54,13 +50,16 @@ array_excluded_foot as (
 )
 SELECT id, 1/ceil(length_m/%i) as fraction, w.class_id  
 FROM ways w, array_class_ids a 
-WHERE length_m > %i
+WHERE length_m > %i 
 AND w.class_id not in (select * from array_class_ids)
 AND (foot not in (select * from array_excluded_foot) OR foot IS NULL);
 '''
+% (max_length,max_length)
+)
 ways_to_split = cursor.fetchall()
 
  
+
 for i in ways_to_split:
     fraction = i[1]
     end = 0
@@ -75,19 +74,18 @@ for i in ways_to_split:
                           geom from ways where id=%i''' % (start,end,i[0]))
 
         con.commit()
-
+        
+cursor.execute('''select distinct on (geom) geom, ways_id 
+from ways_split_long''')     
+        
 
 sql_fill_tables = '''
 UPDATE ways_split_long set class_id = ways.class_id from ways
 where ways_id = ways.id;
-
 insert into ways_split_long(class_id,ways_id,geom)
 select class_id,w.id ways_id, geom 
 from ways w
 where w.id not in (select ways_id from ways_split_long);
-
-
-
 insert into ways_split_long_vertices_pgr(geom)
 (
 	select distinct geom from(
@@ -98,14 +96,12 @@ insert into ways_split_long_vertices_pgr(geom)
 		from ways_split_long
 	) x
 );
-
 with s as (
 	select w.id,st_startpoint(w.geom), v.id as source
 	from ways_split_long w, ways_split_long_vertices_pgr v
 	where st_startpoint(w.geom) = v.geom
 ) 
 UPDATE ways_split_long set source = s.source from s where ways_split_long.id = s.id;
-
 with t as (
 	select w.id,st_endpoint(w.geom), v.id as target
 	from ways_split_long w, ways_split_long_vertices_pgr v
@@ -114,9 +110,8 @@ with t as (
 UPDATE ways_split_long set target = t.target from t where ways_split_long.id = t.id;
 UPDATE ways_split_long set length_m = st_length(geom::geography);
 '''
-#cursor.execute(sql_fill_tables)
+cursor.execute(sql_fill_tables)
 con.commit()
 con.close()
-
 
 
